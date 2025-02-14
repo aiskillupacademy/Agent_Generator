@@ -16,15 +16,13 @@ from langgraph.graph import END, StateGraph
 from langchain.output_parsers import PydanticOutputParser
 import os
 import streamlit as st
-from models.gemini_models import GeminiModel
+from langchain_groq import ChatGroq
 
 os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
+os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
 
 def get_llm():
-    return GeminiModel(
-                model="gemini-1.5-flash",
-                temperature=0.7
-            ) 
+    return ChatGroq(model="llama3-70b-8192", temperature=0.7)
     # return ChatVertexAI(model="gemini-1.5-flash", temperature=0.3)
 
 llm = get_llm()
