@@ -22,7 +22,7 @@ os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 def get_llm():
     return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
 
-llm = ChatVertexAI(model_name="gemini-1.5-flash")
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
 
 def get_system_prompt(desc):
     """
