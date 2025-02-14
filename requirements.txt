@@ -1,4 +1,4 @@
 streamlit
 langchain
-langchain_google_genai
+langchain_google_vertexai
 langgraph

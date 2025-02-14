@@ -11,7 +11,7 @@ from langchain_core.pydantic_v1 import BaseModel
 from typing import List
 from langchain.tools import Tool, StructuredTool
 from langchain_core.documents import Document
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_vertexai import ChatVertexAI
 from langgraph.graph import END, StateGraph
 from langchain.output_parsers import PydanticOutputParser
 import os
@@ -20,9 +20,9 @@ import streamlit as st
 os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 
 def get_llm():
-    return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
+    return ChatVertexAI(model="gemini-1.5-flash", temperature=0.3)
 
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
+llm = ChatVertexAI(model_name="gemini-1.5-flash")
 
 def get_system_prompt(desc):
     """
