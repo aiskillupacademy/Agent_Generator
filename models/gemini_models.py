@@ -6,7 +6,7 @@ import streamlit as st
 
 class GeminiModel:
     def __init__(self, temperature=0, model=None):
-        self.api_key = st.secrets.get("GEMINI_API_KEY", "default_gemini_api_key")
+        self.api_key = st.secrets.get("GOOGLE_API_KEY", "default_gemini_api_key")
         self.headers = {
             'Content-Type': 'application/json'
         }
