@@ -11,7 +11,7 @@ from langchain_core.pydantic_v1 import BaseModel
 from typing import List
 from langchain.tools import Tool, StructuredTool
 from langchain_core.documents import Document
-from langchain_google_vertexai import ChatVertexAI
+# from langchain_google_vertexai import ChatVertexAI
 from langgraph.graph import END, StateGraph
 from langchain.output_parsers import PydanticOutputParser
 import os
@@ -27,7 +27,7 @@ def get_llm():
             ) 
     # return ChatVertexAI(model="gemini-1.5-flash", temperature=0.3)
 
-# llm = ChatVertexAI(model_name="gemini-1.5-flash")
+llm = get_llm()
 
 def get_system_prompt(desc):
     """
