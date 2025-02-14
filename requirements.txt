@@ -1,4 +1,4 @@
 streamlit
 langchain
-langchain_groq
+langchain_google_vertexai
 langgraph
