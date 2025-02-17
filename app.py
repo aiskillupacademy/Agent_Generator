@@ -1,29 +1,22 @@
-from typing import TypedDict, Dict, Annotated,Union, Callable
-from langchain_core.agents import AgentAction, AgentFinish
-from langchain.agents.output_parsers.tools import ToolAgentAction
-from langchain_core.messages import BaseMessage
-import operator
-from langgraph.prebuilt.tool_executor import ToolExecutor
-from langchain.prompts import PromptTemplate
-from langchain.agents import create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.pydantic_v1 import BaseModel
-from typing import List
-from langchain.tools import Tool, StructuredTool
-from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_google_vertexai import ChatVertexAI
-from langgraph.graph import END, StateGraph
 from langchain.output_parsers import PydanticOutputParser
 import os
 import streamlit as st
 
 os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
-os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
 
 def get_llm():
     return ChatVertexAI(model="gemini-1.5-flash", temperature=0.3)
 
-llm = get_llm()
+llm_google = ChatVertexAI(model_name="gemini-1.5-flash")
+
+class Inputs(BaseModel):
+    inputs: dict[str, str] = Field(description="Inputs as keys and their description as values.")
+
+class Workflow(BaseModel):
+    workflow: dict[str, dict[str, str]] = Field(description="steps as keys and their inputs and description as sub dictionary keys and values.")
 
 def get_system_prompt(desc):
     """
@@ -55,7 +48,7 @@ def get_system_prompt(desc):
         Avoid generic roles; instead, use specific ones such as 'Healthcare Operations Specialist,' 'Technology Product Strategist,' 'Finance Data Analyst,' etc. 
         """
     )
-    chain = prompt | get_llm()
+    chain = prompt | llm_google
     system_prompt = chain.invoke(desc).content
     return system_prompt
 
@@ -86,259 +79,103 @@ def get_human_prompt(desc):
         Avoid abstract or overly general instructions. Make the task actionable, with clear deliverables or objectives. Never start with 'Here is your prompt...'. Just give the prompt.
         """
     )
-    chain = prompt | get_llm()
+    chain = prompt | llm_google
     human_prompt = chain.invoke(desc).content
     return human_prompt
 
-def quality_checker_bot(task, output):
+def get_inputs(agent_name, agent_details):
+    prompt = ChatPromptTemplate.from_template(
     """
-    Evaluates the quality of an output based on a given task and suggests improvements.
+    You are given a tool name and its details. Your task is to determine the essential inputs required from the user to operate the tool effectively.  
 
-    Parameters:
-        task (str): The task description.
-        output (str): The generated output to be checked.
-        llm (LLMChain): The language model chain to process the prompt.
+    ### **Guidelines:**  
+    - Identify only the necessary inputs for the tool to function correctly.  
+    - Keep the response concise, structured, and relevant.  
+    - Provide a clear input name and a brief description of its purpose.  
+    - Don't write about budget, landing URL.
 
-    Returns:
-        str: Suggested changes for improving the output or "No changes needed."
-    """
-    quality_check_prompt = PromptTemplate(
-        input_variables=["task", "output"],
-        template="""
-        You are a quality-checking bot designed to improve outputs based on their alignment with the given task. 
-        Analyze the provided output in detail and suggest only the changes needed to enhance its quality. 
+    ---
 
-        Task: {task}
+    ### **Tool Name:** {name}  
+    ### **Tool Details:** {detail}  
 
-        Output: {output}
+    #### **Required Inputs:**  
+    (Generate a structured list of inputs with their names and descriptions.)  
 
-        When making suggestions, consider:
-        - Does the output fully address the task?
-        - Is it accurate and relevant?
-        - Is it clear, detailed, and well-structured?
+    Keep it short and to the point.
 
-        Provide your suggestions as a list of changes. 
-        If no changes are needed, state: "No changes needed."
+    \n{inst}
+    """)
 
-        Example Output:
-        - Add more detail about [specific aspect].
-        - Correct inaccuracies in [specific section].
-        - Improve clarity by rephrasing [specific sentences].
-        """
-    )
-    quality_chain = quality_check_prompt  | get_llm()
-    result = quality_chain.invoke({"task": task, "output": output}).content
+    parser = PydanticOutputParser(pydantic_object=Inputs)
+    chain = prompt | llm_google | parser
+    result = chain.invoke({"name": agent_name, "detail": agent_details, "inst": parser.get_format_instructions()}).inputs
+
     return result
 
-def generate_content(human_prompt, system_prompt="You are an expert in generating anything. Your task will be to follow the user instruction and generate accordingly.", temp=0.2, model="gemini-1.5-flash", platform="google"):
+def get_workflow(agent_name, agent_details, result):
+    prompt1 = ChatPromptTemplate.from_template(
     """
-    Generates text using a Large Language Model (LLM) with configurable parameters.
+    You are given a tool name, its details, and the required inputs needed to operate it.  
+    Your task is to generate a workflow (all the steps) for the tool. 
 
-    Parameters:
-        human_prompt (str or list): 
-            - If `str`: A single prompt string representing the user's input to the LLM.
-            - If `list`: A list of message dictionaries where each dictionary contains 
-              a `role` ("human", "assistant", or "system") and `content` fields.
-        system_prompt (str, optional): 
-            - A system-level instruction to guide the behavior of the LLM. 
-              Defaults to "You are an expert in generating anything. Your task will 
-              be to follow the user instruction and generate accordingly."
-        temp (float, optional): 
-            - The temperature setting for the model. Controls randomness of output 
-              (higher values increase randomness). Defaults to 0.2.
-        model (str, optional): 
-            - The LLM model to be used. Defaults to "gemini-1.5-flash."
-        platform (str, optional): 
-            - The platform hosting the LLM model. Defaults to "google."
+    ### **Guidelines:**  
+    - Ensure the steps follow a logical and actionable sequence.  
+    - Clearly outline each step with concise phrasing.   
+    - Keep the response structured, professional, and easy to follow.
+    - Do not include steps for collecting inputs — focus only on the workflow itself. 
+    - Define the inputs for all the steps from the required inputs list provided. There can be more than 1 input for a step.
 
-    Returns:
-        str: The generated text from the LLM based on the input prompts and configurations.
+    ---
 
-    Raises:
-        ValueError: If `human_prompt` is neither a `str` nor a `list`.
+    ### **Tool Name:** {name}  
+    ### **Tool Details:** {detail}    
+    ### **Required Inputs:** {inputs} 
 
-    """
-    
-    if type(human_prompt)== str:
-        messages = [
-            {"role": "system", "content": system_prompt },
-            {"role": "human", "content": human_prompt }
-    ]
-        # llm = ChatVertexAI(platform=platform, model=model, temperature=temp)
-        output = get_llm().with_config({"run_name": "FUNC> LLM"}).invoke(messages).content
-        return output
-    elif type(human_prompt)== list:
-        messages = [
-            {"role": "system", "content": system_prompt }]
-        messages += human_prompt
-        # llm = ChatVertexAI(platform=platform, model=model,temperature=temp)
-        output = get_llm().with_config({"run_name": "FUNC> LLM"}).invoke(messages).content
-        return output
-    
-class GetSystemPromptArgs(BaseModel):
-    query: str
+    #### **Steps to Complete the Task:**  
+    (Generate a clear, structured step-by-step guide.)  
+    Keep it short and to the point.
+    - Start the steps after all necessary inputs have already been provided.
 
-class GetSystemPromptOutput(BaseModel):
-    system_prompt: str
+    \n{inst}
+    """)
 
-get_system_prompt_tool = Tool(
-    name="get_system_prompt",
-    func=get_system_prompt,
-    description="Generates a system prompt instructing a specialist to complete a specific task based on a query.",
-    args_schema=GetSystemPromptArgs,
-    output_schema=GetSystemPromptOutput
-)
+    parser1 = PydanticOutputParser(pydantic_object=Workflow)
+    chain1 = prompt1 | llm_google | parser1
+    result1 = chain1.invoke({"name": agent_name, "detail": agent_details, "inputs": result, "inst": parser1.get_format_instructions()}).workflow
 
-class GetHumanPromptArgs(BaseModel):
-    query: str
-
-class GetHumanPromptOutput(BaseModel):
-    human_prompt: str
-
-get_human_prompt_tool = Tool(
-    name="get_human_prompt",
-    func=get_human_prompt,
-    description="Generates a human prompt that provides a clear and specific task to be completed.",
-    args_schema=GetHumanPromptArgs,
-    output_schema=GetHumanPromptOutput
-)
-
-class QualityCheckerArgs(BaseModel):
-    task: str
-    output: str
-
-class QualityCheckerOutput(BaseModel):
-    suggestions: List[str]
-
-quality_checker_tool = StructuredTool(
-    name="quality_checker_bot",
-    func=quality_checker_bot,
-    description="Evaluates the quality of an output based on a given task and suggests improvements.",
-    args_schema=QualityCheckerArgs,
-    output_schema=QualityCheckerOutput
-)
-
-class GenerateContentArgs(BaseModel):
-    human_prompt: str
-    system_prompt: str = "You are an expert in generating anything. Your task will be to follow the user instruction and generate accordingly."
-    temp: float = 0.2
-    model: str = "gemini-1.5-flash"
-    platform: str = "google"
-
-class GenerateContentOutput(BaseModel):
-    generated_text: str
-
-generate_content_tool = StructuredTool(
-    name="generate_content",
-    func=generate_content,
-    description="Generates text using a Large Language Model (LLM) with configurable parameters.",
-    args_schema=GenerateContentArgs,
-    output_schema=GenerateContentOutput
-)
-
-toolkit = [
-    get_system_prompt_tool,
-    get_human_prompt_tool,
-    generate_content_tool
-]
-
-system_prompt = """ You are a smart AI assistant capable of generating system prompt, human prompt, using these prompts to generate content.
-        Use your tools to answer questions. 
-        If you do not have a tool to answer the question, say so. """
-
-tool_calling_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", system_prompt),
-        ("human", "{input}"),
-        MessagesPlaceholder("agent_scratchpad"),
-    ]
-)
-
-tool_runnable = create_tool_calling_agent(llm, toolkit, prompt  = tool_calling_prompt)
-
-class AgentState(TypedDict):
-    input: str
-    agent_outcome: Union[AgentAction, list, ToolAgentAction, AgentFinish, None]
-    intermediate_steps: Annotated[list[Union[tuple[AgentAction, str], tuple[ToolAgentAction, str]]], operator.add]
-
-def run_tool_agent(state):
-    # print("AGENT MODE")
-    agent_outcome = tool_runnable.invoke(state)
-    return {"agent_outcome": agent_outcome}
-
-tool_executor = ToolExecutor(toolkit)
-
-def execute_tools(state):
-    # print("ACTION MODE")
-    agent_action = state['agent_outcome']
-    if type(agent_action) is not list:
-        agent_action = [agent_action]
-    steps = []
-    for action in agent_action:
-        output = tool_executor.invoke(action)
-        steps.append((action, str(output)))
-
-    # print(f"OUTPUT: {output}")
-    return {"intermediate_steps": steps}
-
-def should_continue(data):
-    if isinstance(data['agent_outcome'], AgentFinish):
-        return "END"
-    else:
-        return "CONTINUE"
-    
-def define_workflow():
-    workflow = StateGraph(AgentState)
-    workflow.add_node("agent", run_tool_agent)
-    workflow.add_node("action", execute_tools)
-    workflow.set_entry_point("agent")
-    workflow.add_edge('action', 'agent')
-    
-    workflow.add_conditional_edges(
-        "agent",
-        should_continue,
-        {
-            "CONTINUE": "action",
-            "END": END
-        }
-    )
-
-    app = workflow.compile()
-    return app
+    return result1
 
 # Streamlit app
-st.title("Content Generator Agent")
+st.title("Agent Generator")
 
 # Input query
-query = st.text_input("Enter your query")
-
+agent_name = st.text_input("Enter agent name")
+agent_details = st.text_input("Enter agent description")
 
 if st.button("Generate"):
-    inputs = {"input": query}
-    output = []
-    app = define_workflow()
+    st.header(agent_name.upper())
+    inputs = get_inputs(agent_name, agent_details)
+    st.subheader("INPUTS")
+    for key, value in inputs.items():
+        st.markdown(f"**{key}:** {value}")
+    workflow = get_workflow(agent_name, agent_details, inputs)
+    st.header("WORKFLOW")
+    prompts = []
+    for keys in workflow.keys():
+        print(keys)
+        prmpts = {}
+        prmpts['step'] = keys
+        prmpts['description'] = workflow[keys]['description']
+        prmpts["inputs"] = workflow[keys]['inputs'].split(',')
+        prmpts["system_prompt"] = get_system_prompt(f"Task: {keys}. \n Desc: {workflow[keys]['description']}")
+        prmpts["human_prompt"] = get_human_prompt(f"Task: {keys}. \n Desc: {workflow[keys]['description']}")
+        prompts.append(prmpts)
 
-    for s in app.stream(inputs, config={"recursion_limit": 50}):
-        temp_dict = {}
-        out = list(s.values())[0]
-        if list(out.keys())[0] == "agent_outcome":
-            try:
-                temp_dict["mode"] = "AGENT"
-                temp_dict["output"] = f"{out['agent_outcome'][0].tool}"
-
-                st.header("AGENT")
-                st.write(out['agent_outcome'][0].tool)
-            except:
-                if out['agent_outcome'].return_values['output'] != "":
-                    temp_dict["mode"] = "AGENT"
-                    temp_dict["output"] = f"{out['agent_outcome'].return_values['output']}"
-                    st.header("FINAL OUTPUT")
-                    st.write(out['agent_outcome'].return_values['output'])
-        elif list(out.keys())[0] == "intermediate_steps":
-            temp_dict["mode"] = "ACTION"
-            temp_dict["output"] = f"{out['intermediate_steps'][0][-1]}"
-            st.header("ACTION")
-            st.write(out['intermediate_steps'][0][-1])
-
-        output.append(temp_dict)
-
+        st.markdown(f"### {keys}")
+        st.write(f"**Description:** {prmpts['description']}")
+        st.write(f"**Inputs Required:** {', '.join(prmpts['inputs'])}")
+        with st.expander("System Prompt"):
+            st.write(prmpts['system_prompt'])
+        with st.expander("Human Prompt"):
+            st.write(prmpts['human_prompt'])
