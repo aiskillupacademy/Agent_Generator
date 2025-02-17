@@ -1,6 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
-from langchain_google_vertexai import ChatVertexAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.output_parsers import PydanticOutputParser
 import os
 import streamlit as st
@@ -8,9 +8,9 @@ import streamlit as st
 os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 
 def get_llm():
-    return ChatVertexAI(model="gemini-1.5-flash", temperature=0.3)
+    return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
 
-llm_google = ChatVertexAI(model_name="gemini-1.5-flash")
+llm_google = get_llm()
 
 class Inputs(BaseModel):
     inputs: dict[str, str] = Field(description="Inputs as keys and their description as values.")
