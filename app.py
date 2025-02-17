@@ -124,7 +124,7 @@ def get_workflow(agent_name, agent_details, result):
     - Clearly outline each step with concise phrasing.   
     - Keep the response structured, professional, and easy to follow.
     - Do not include steps for collecting inputs — focus only on the workflow itself. 
-    - Define the inputs for all the steps from the required inputs provided. There can be more than 1 input for a step.
+    - Define the inputs (comma separated string) for all the steps from the required inputs provided. There can be more than 1 input for a step.
 
     ---
 
