@@ -1,6 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
-from langchain_google_vertexai import ChatVertexAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.output_parsers import PydanticOutputParser
 import os
 import streamlit as st
@@ -8,7 +8,7 @@ import streamlit as st
 os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 
 def get_llm():
-    return ChatVertexAI(model="gemini-1.5-flash", temperature=0.3)
+    return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
 
 llm_google = ChatVertexAI(model_name="gemini-1.5-flash")
 
@@ -157,6 +157,8 @@ if "user_inputs" not in st.session_state:
     st.session_state.user_inputs = {}
 
 if st.button("Generate"):
+    chain1 = ChatPromptTemplate.from_template(f"Given the agent name and detail, create a 2 line description about the agent on what it does. \n Agent Name: {agent_name} \n\n Agent Detail: {agent_details}") | llm_google
+    st.session_state.description = chain1.invoke({}).content
     st.session_state.inputs = get_inputs(agent_name, agent_details)
     st.session_state.workflow = get_workflow(agent_name, agent_details, st.session_state.inputs)
 
@@ -172,7 +174,9 @@ if st.button("Generate"):
         st.session_state.prompts.append(prmpts)
 
 # Display inputs and workflow if generated
-if "inputs" in st.session_state:
+if "inputs" in st.session_state and "description" in st.session_state:
+    st.header(agent_name.upper())
+    st.write(st.session_state.description)
     st.subheader("INPUTS")
     for key, value in st.session_state.inputs.items():
         st.markdown(f"**{key}:** {value}")
