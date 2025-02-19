@@ -1,6 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_vertexai import ChatVertexAI
 from langchain.output_parsers import PydanticOutputParser
 import os
 import streamlit as st
@@ -8,12 +8,12 @@ import streamlit as st
 os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 
 def get_llm():
-    return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
+    return ChatVertexAI(model="gemini-1.5-flash", temperature=0.3)
 
-llm_google = get_llm()
+llm_google = ChatVertexAI(model_name="gemini-1.5-flash")
 
 class Inputs(BaseModel):
-    inputs: dict[str, str] = Field(description="Inputs as keys and their description as values.")
+    inputs: dict[str, str] = Field(description="inputs as keys and their description as values.")
 
 class Workflow(BaseModel):
     workflow: dict[str, dict[str, str]] = Field(description="steps as keys and their inputs and description as sub dictionary keys and values.")
@@ -100,7 +100,7 @@ def get_inputs(agent_name, agent_details):
     ### **Tool Details:** {detail}  
 
     #### **Required Inputs:**  
-    (Generate a structured list of inputs with their names and descriptions.)  
+    (Generate a structured comma separated string of inputs with their names and descriptions.)  
 
     Keep it short and to the point.
 
@@ -124,7 +124,7 @@ def get_workflow(agent_name, agent_details, result):
     - Clearly outline each step with concise phrasing.   
     - Keep the response structured, professional, and easy to follow.
     - Do not include steps for collecting inputs — focus only on the workflow itself. 
-    - Define the inputs (comma separated string) for all the steps from the required inputs provided. There can be more than 1 input for a step.
+    - Define the inputs for all the steps from the required inputs list provided. There can be more than 1 input for a step.
 
     ---
 
@@ -153,29 +153,60 @@ st.title("Agent Generator")
 agent_name = st.text_input("Enter agent name")
 agent_details = st.text_input("Enter agent description")
 
-if st.button("Generate"):
-    st.header(agent_name.upper())
-    inputs = get_inputs(agent_name, agent_details)
-    st.subheader("INPUTS")
-    for key, value in inputs.items():
-        st.markdown(f"**{key}:** {value}")
-    workflow = get_workflow(agent_name, agent_details, inputs)
-    st.header("WORKFLOW")
-    prompts = []
-    for keys in workflow.keys():
-        print(keys)
-        prmpts = {}
-        prmpts['step'] = keys
-        prmpts['description'] = workflow[keys]['description']
-        prmpts["inputs"] = workflow[keys]['inputs'].split(',')
-        prmpts["system_prompt"] = get_system_prompt(f"Task: {keys}. \n Desc: {workflow[keys]['description']}")
-        prmpts["human_prompt"] = get_human_prompt(f"Task: {keys}. \n Desc: {workflow[keys]['description']}")
-        prompts.append(prmpts)
+if "user_inputs" not in st.session_state:
+    st.session_state.user_inputs = {}
 
-        st.markdown(f"### {keys}")
-        st.write(f"**Description:** {prmpts['description']}")
-        st.write(f"**Inputs Required:** {', '.join(prmpts['inputs'])}")
+if st.button("Generate"):
+    st.session_state.inputs = get_inputs(agent_name, agent_details)
+    st.session_state.workflow = get_workflow(agent_name, agent_details, st.session_state.inputs)
+
+    st.session_state.prompts = []
+    for keys in st.session_state.workflow.keys():
+        prmpts = {
+            'step': keys,
+            'description': st.session_state.workflow[keys]['description'],
+            'inputs': st.session_state.workflow[keys]['inputs'].split(','),
+            "system_prompt": get_system_prompt(f"Task: {keys}. \n Desc: {st.session_state.workflow[keys]['description']}"),
+            "human_prompt": get_human_prompt(f"Task: {keys}. \n Desc: {st.session_state.workflow[keys]['description']}")
+        }
+        st.session_state.prompts.append(prmpts)
+
+# Display inputs and workflow if generated
+if "inputs" in st.session_state:
+    st.subheader("INPUTS")
+    for key, value in st.session_state.inputs.items():
+        st.markdown(f"**{key}:** {value}")
+
+    st.header("WORKFLOW")
+    for p in st.session_state.prompts:
+        st.markdown(f"### {p['step']}")
+        st.write(f"**Description:** {p['description']}")
+        st.write(f"**Inputs Required:** {', '.join(p['inputs'])}")
         with st.expander("System Prompt"):
-            st.write(prmpts['system_prompt'])
+            st.write(p['system_prompt'])
         with st.expander("Human Prompt"):
-            st.write(prmpts['human_prompt'])
+            st.write(p['human_prompt'])
+
+# User input fields (persist using session_state)
+if st.button("Try it out..."):
+    st.session_state.show_inputs = True
+
+if st.session_state.get("show_inputs", False):
+    for key, value in st.session_state.inputs.items():
+        st.session_state.user_inputs[key] = st.text_input(label=key, help=value, value=st.session_state.user_inputs.get(key, ""))
+
+# Run Agent Logic
+if st.button('Run Agent'):
+    final_input = ""
+    for p in st.session_state.prompts:
+        st.write(p['step'])
+        inputs_text = "\n\n".join([f"{i}: {st.session_state.user_inputs.get(i, '')}" for i in p['inputs']])
+        
+        s_p = p['system_prompt']
+        h_p = p['human_prompt'] + "\n\n" + inputs_text + "\n\n" + final_input
+
+        chain = ChatPromptTemplate.from_messages([("system", s_p), ("user", h_p)]) | llm_google
+        res = chain.invoke({}).content
+        st.write(f"Output: {res}")
+
+        final_input = res  # Store result for next iteration
