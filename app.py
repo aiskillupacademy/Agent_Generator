@@ -10,7 +10,7 @@ os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 def get_llm():
     return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
 
-llm_google = ChatVertexAI(model_name="gemini-1.5-flash")
+llm_google = get_llm()
 
 class Inputs(BaseModel):
     inputs: dict[str, str] = Field(description="inputs as keys and their description as values.")
