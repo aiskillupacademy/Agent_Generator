@@ -18,6 +18,9 @@ class Inputs(BaseModel):
 class Workflow(BaseModel):
     workflow: dict[str, dict[str, str]] = Field(description="steps as keys and their inputs and description as sub dictionary keys and values.")
 
+class ExtractedInputs(BaseModel):
+    inputs: dict[str, str] = Field(description="inputs as keys and their filled data as values.")
+
 def get_system_prompt(desc):
     """
     Generates a system prompt instructing a specialist to complete a specific task based on a query.
@@ -83,10 +86,10 @@ def get_human_prompt(desc):
     human_prompt = chain.invoke(desc).content
     return human_prompt
 
-def get_inputs(agent_name, agent_details):
+def get_inputs(agent_name, query):
     prompt = ChatPromptTemplate.from_template(
     """
-    You are given a tool name and its details. Your task is to determine the essential inputs required from the user to operate the tool effectively.  
+    You are given a tool name and user query. Your task is to determine the essential inputs required from the user to operate the tool effectively for the given query.  
 
     ### **Guidelines:**  
     - Identify only the necessary inputs for the tool to function correctly.  
@@ -97,7 +100,7 @@ def get_inputs(agent_name, agent_details):
     ---
 
     ### **Tool Name:** {name}  
-    ### **Tool Details:** {detail}  
+    ### **User Query** {detail}  
 
     #### **Required Inputs:**  
     (Generate a structured comma separated string of inputs with their names and descriptions.)  
@@ -109,14 +112,14 @@ def get_inputs(agent_name, agent_details):
 
     parser = PydanticOutputParser(pydantic_object=Inputs)
     chain = prompt | llm_google | parser
-    result = chain.invoke({"name": agent_name, "detail": agent_details, "inst": parser.get_format_instructions()}).inputs
+    result = chain.invoke({"name": agent_name, "detail": query, "inst": parser.get_format_instructions()}).inputs
 
     return result
 
-def get_workflow(agent_name, agent_details, result):
+def get_workflow(agent_name, query, result):
     prompt1 = ChatPromptTemplate.from_template(
     """
-    You are given a tool name, its details, and the required inputs needed to operate it.  
+    You are given a tool name, user query, and the required inputs needed to operate it.  
     Your task is to generate a workflow (all the steps) for the tool. 
 
     ### **Guidelines:**  
@@ -124,12 +127,14 @@ def get_workflow(agent_name, agent_details, result):
     - Clearly outline each step with concise phrasing.   
     - Keep the response structured, professional, and easy to follow.
     - Do not include steps for collecting inputs — focus only on the workflow itself. 
-    - Define the inputs for all the steps from the required inputs list provided. There can be more than 1 input for a step. Give the inptus in a comma separated string.
+    - Define the inputs for all the steps from the required inputs list provided. There can be more than 1 input for a step.
+    - Don't add a Review step in the workflow.
+    - If no inputs required for a step, give a blank string.
 
     ---
 
     ### **Tool Name:** {name}  
-    ### **Tool Details:** {detail}    
+    ### **User Query:** {detail}    
     ### **Required Inputs:** {inputs} 
 
     #### **Steps to Complete the Task:**  
@@ -142,25 +147,44 @@ def get_workflow(agent_name, agent_details, result):
 
     parser1 = PydanticOutputParser(pydantic_object=Workflow)
     chain1 = prompt1 | llm_google | parser1
-    result1 = chain1.invoke({"name": agent_name, "detail": agent_details, "inputs": result, "inst": parser1.get_format_instructions()}).workflow
+    result1 = chain1.invoke({"name": agent_name, "detail": query, "inputs": result, "inst": parser1.get_format_instructions()}).workflow
 
     return result1
+
+def extract_inputs(query, inputs):
+    prompt = ChatPromptTemplate.from_template(
+    """
+    Your are given a user query and the required input fields with their description. 
+    Your task is to fill the input fields using the information from user query.
+
+    ### **User Query:** {detail}    
+    ### **Required Inputs:** {inputs}
+
+    The output should be json object with keys as input name and value as the filled input.
+    \n{inst}
+    """)
+
+    parser = PydanticOutputParser(pydantic_object=ExtractedInputs)
+    chain = prompt | llm_google | parser
+    result = chain.invoke({"inputs": inputs, "detail": query, "inst": parser.get_format_instructions()}).inputs
+
+    return result
 
 # Streamlit app
 st.title("Agent Generator")
 
 # Input query
 agent_name = st.text_input("Enter agent name")
-agent_details = st.text_input("Enter agent description")
+query = st.text_input("Enter your query")
 
 if "user_inputs" not in st.session_state:
     st.session_state.user_inputs = {}
 
 if st.button("Generate"):
-    chain1 = ChatPromptTemplate.from_template(f"Given the agent name and detail, create a 2 line description about the agent on what it does. \n Agent Name: {agent_name} \n\n Agent Detail: {agent_details}") | llm_google
+    chain1 = ChatPromptTemplate.from_template(f"Given the agent name and user query, create a 2 line description about the agent on what it does. \n Agent Name: {agent_name} \n\n User Query: {query}") | llm_google
     st.session_state.description = chain1.invoke({}).content
-    st.session_state.inputs = get_inputs(agent_name, agent_details)
-    st.session_state.workflow = get_workflow(agent_name, agent_details, st.session_state.inputs)
+    st.session_state.inputs = get_inputs(agent_name, query)
+    st.session_state.workflow = get_workflow(agent_name, query, st.session_state.inputs)
 
     st.session_state.prompts = []
     for keys in st.session_state.workflow.keys():
@@ -196,9 +220,9 @@ if st.button("Try it out..."):
     st.session_state.show_inputs = True
 
 if st.session_state.get("show_inputs", False):
+    inp = extract_inputs(query, st.session_state.inputs)
     for key, value in st.session_state.inputs.items():
-        st.session_state.user_inputs[key] = st.text_input(label=key, help=value, value=st.session_state.user_inputs.get(key, ""))
-
+        st.session_state.user_inputs[key] = st.text_input(label=key, help=value, value=st.session_state.user_inputs.get(key, inp[key]))
 # Run Agent Logic
 if st.button('Run Agent'):
     final_input = ""
